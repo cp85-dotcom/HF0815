@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual HeadTracker Dashboard</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #fff; margin: 0; padding: 15px; }
+        h1 { text-align: center; font-size: 1.4rem; color: #4da6ff; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .card { background: #1e1e1e; padding: 15px; border-radius: 12px; border: 1px solid #333; text-align: center; }
+        .card h2 { margin: 0 0 10px 0; font-size: 1.1rem; color: #aaa; }
+        .val { font-size: 1.4rem; font-weight: bold; font-family: monospace; color: #00ffcc; margin: 5px 0; }
+        .diff-card { background: #2a2510; border-color: #d4af37; grid-column: span 2; }
+        .diff-card .val { color: #ffd700; font-size: 1.8rem; }
+        
+        button { width: 100%; padding: 12px; margin-top: 8px; border: none; border-radius: 8px; font-size: 0.95rem; font-weight: bold; cursor: pointer; }
+        .btn-blue { background: #0066cc; color: white; }
+        .btn-green { background: #028a0f; color: white; grid-column: span 2; font-size: 1.1rem; padding: 15px; }
+        .btn-orange { background: #d97706; color: white; grid-column: span 2; margin-top: 15px; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; background: #1e1e1e; border-radius: 8px; overflow: hidden; }
+        th, td { padding: 10px; text-align: center; border-bottom: 1px solid #333; font-size: 0.9rem; }
+        th { background: #252525; color: #888; }
+    </style>
+</head>
+<body>
+
+    <h1>Dual HeadTracker Controller</h1>
+
+    <div class="grid">
+        <!-- Sensor 1 -->
+        <div class="card">
+            <h2>Sensor 1</h2>
+            <button id="btnConnect1" class="btn-blue" onclick="connectSensor(1)">Verbinden</button>
+            <div style="margin-top:15px;">Pitch: <span id="p1" class="val">--</span>°</div>
+            <div>Roll: <span id="r1" class="val">--</span>°</div>
+        </div>
+
+        <!-- Sensor 2 -->
+        <div class="card">
+            <h2>Sensor 2</h2>
+            <button id="btnConnect2" class="btn-blue" onclick="connectSensor(2)">Verbinden</button>
+            <div style="margin-top:15px;">Pitch: <span id="p2" class="val">--</span>°</div>
+            <div>Roll: <span id="r2" class="val">--</span>°</div>
+        </div>
+
+        <!-- Global Actions -->
+        <button class="btn-orange" onclick="zeroBothSensors()"> beide nullstellen (CAL)</button>
+
+        <!-- Live Differenz -->
+        <div class="card diff-card">
+            <h2>Aktuelle Winkeldifferenz</h2>
+            <div>Δ Pitch: <span id="diffP" class="val">--</span>°</div>
+            <div>Δ Roll: <span id="diffR" class="val">--</span>°</div>
+        </div>
+
+        <!-- Snapshot Button -->
+        <button class="btn-green" onclick="saveSnapshot()"> Messung Speichern</button>
+    </div>
+
+    <!-- Gespeicherte Werte -->
+    <h3>Gespeicherte Messungen</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Sens 1 (P/R)</th>
+                <th>Sens 2 (P/R)</th>
+                <th>Δ Pitch</th>
+                <th>Δ Roll</th>
+            </tr>
+        </thead>
+        <tbody id="logTable">
+            <!-- Dynamischer Inhalt -->
+        </tbody>
+    </table>
+
+<script>
+    const SERVICE_UUID        = "48f2d9f5-7936-4e3d-a871-d804b5f560b0";
+    const CHARACTERISTIC_UUID = "6eef7420-7b22-4e6a-a067-cfb61c2fdd65";
+
+    let sensor1 = { pitch: 0, roll: 0, char: null, connected: false };
+    let sensor2 = { pitch: 0, roll: 0, char: null, connected: false };
+    let snapshotCount = 0;
+
+    async function connectSensor(id) {
+        try {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ namePrefix: 'HeadTracker_' }],
+                optionalServices: [SERVICE_UUID]
+            });
+
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService(SERVICE_UUID);
+            const characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+            if (id === 1) {
+                sensor1.char = characteristic;
+                sensor1.connected = true;
+                document.getElementById('btnConnect1').innerText = " Verbunden";
+                document.getElementById('btnConnect1').style.background = "#00b359";
+            } else {
+                sensor2.char = characteristic;
+                sensor2.connected = true;
+                document.getElementById('btnConnect2').innerText = " Verbunden";
+                document.getElementById('btnConnect2').style.background = "#00b359";
+            }
+
+            await characteristic.startNotifications();
+            characteristic.addEventListener('characteristicvaluechanged', (e) => handleData(e, id));
+
+        } catch (error) {
+            console.error("BLE Fehler:", error);
+            alert("Verbindung fehlgeschlagen: " + error);
+        }
+    }
+
+    function handleData(event, id) {
+        const decoder = new TextDecoder('utf-8');
+        const str = decoder.decode(event.target.value);
+        
+        // Erwartetes Format vom ESP32: "P:12.3,R:-4.5"
+        const matches = str.match(/P:([-\d.]+),R:([-\d.]+)/);
+        if (matches) {
+            const p = parseFloat(matches[1]);
+            const r = parseFloat(matches[2]);
+
+            if (id === 1) {
+                sensor1.pitch = p; sensor1.roll = r;
+                document.getElementById('p1').innerText = p.toFixed(1);
+                document.getElementById('r1').innerText = r.toFixed(1);
+            } else {
+                sensor2.pitch = p; sensor2.roll = r;
+                document.getElementById('p2').innerText = p.toFixed(1);
+                document.getElementById('r2').innerText = r.toFixed(1);
+            }
+
+            updateDifference();
+        }
+    }
+
+    function updateDifference() {
+        if (!sensor1.connected || !sensor2.connected) return;
+
+        const diffP = Math.abs(sensor1.pitch - sensor2.pitch);
+        const diffR = Math.abs(sensor1.roll - sensor2.roll);
+
+        document.getElementById('diffP').innerText = diffP.toFixed(1);
+        document.getElementById('diffR').innerText = diffR.toFixed(1);
+    }
+
+    async function zeroBothSensors() {
+        const encoder = new TextEncoder();
+        const calData = encoder.encode("CAL");
+
+        if (sensor1.char) await sensor1.char.writeValue(calData);
+        if (sensor2.char) await sensor2.char.writeValue(calData);
+    }
+
+    function saveSnapshot() {
+        snapshotCount++;
+        const table = document.getElementById('logTable');
+        
+        const diffP = Math.abs(sensor1.pitch - sensor2.pitch).toFixed(1);
+        const diffR = Math.abs(sensor1.roll - sensor2.roll).toFixed(1);
+
+        const row = `<tr>
+            <td><b>#${snapshotCount}</b></td>
+            <td>${sensor1.pitch.toFixed(1)}° / ${sensor1.roll.toFixed(1)}°</td>
+            <td>${sensor2.pitch.toFixed(1)}° / ${sensor2.roll.toFixed(1)}°</td>
+            <td style="color:#ffd700;"><b>${diffP}°</b></td>
+            <td style="color:#ffd700;"><b>${diffR}°</b></td>
+        </tr>`;
+
+        table.insertAdjacentHTML('afterbegin', row);
+    }
+</script>
+</body>
+</html>
