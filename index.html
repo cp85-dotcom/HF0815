@@ -77,11 +77,13 @@
     </table>
 
 <script>
-    const SERVICE_UUID        = "48f2d9f5-7936-4e3d-a871-d804b5f560b0";
-    const CHARACTERISTIC_UUID = "6eef7420-7b22-4e6a-a067-cfb61c2fdd65";
+    // Nordic UART Service (NUS) UUIDs
+    const SERVICE_UUID         = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+    const CHARACTERISTIC_UUID_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // Befehle an ESP32 senden (CAL)
+    const CHARACTERISTIC_UUID_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Daten vom ESP32 empfangen (Pitch/Roll)
 
-    let sensor1 = { pitch: 0, roll: 0, char: null, connected: false };
-    let sensor2 = { pitch: 0, roll: 0, char: null, connected: false };
+    let sensor1 = { pitch: 0, roll: 0, rxChar: null, connected: false };
+    let sensor2 = { pitch: 0, roll: 0, rxChar: null, connected: false };
     let snapshotCount = 0;
 
     async function connectSensor(id) {
@@ -93,22 +95,26 @@
 
             const server = await device.gatt.connect();
             const service = await server.getPrimaryService(SERVICE_UUID);
-            const characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+            
+            // Beide Characteristics abrufen
+            const txCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID_TX);
+            const rxCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID_RX);
 
             if (id === 1) {
-                sensor1.char = characteristic;
+                sensor1.rxChar = rxCharacteristic;
                 sensor1.connected = true;
                 document.getElementById('btnConnect1').innerText = " Verbunden";
                 document.getElementById('btnConnect1').style.background = "#00b359";
             } else {
-                sensor2.char = characteristic;
+                sensor2.rxChar = rxCharacteristic;
                 sensor2.connected = true;
                 document.getElementById('btnConnect2').innerText = " Verbunden";
                 document.getElementById('btnConnect2').style.background = "#00b359";
             }
 
-            await characteristic.startNotifications();
-            characteristic.addEventListener('characteristicvaluechanged', (e) => handleData(e, id));
+            // Auf Benachrichtigungen vom TX-Kanal hören
+            await txCharacteristic.startNotifications();
+            txCharacteristic.addEventListener('characteristicvaluechanged', (e) => handleData(e, id));
 
         } catch (error) {
             console.error("BLE Fehler:", error);
@@ -154,8 +160,9 @@
         const encoder = new TextEncoder();
         const calData = encoder.encode("CAL");
 
-        if (sensor1.char) await sensor1.char.writeValue(calData);
-        if (sensor2.char) await sensor2.char.writeValue(calData);
+        // Sendet "CAL" über die RX-Characteristic an die Sensoren
+        if (sensor1.rxChar) await sensor1.rxChar.writeValue(calData);
+        if (sensor2.rxChar) await sensor2.rxChar.writeValue(calData);
     }
 
     function saveSnapshot() {
