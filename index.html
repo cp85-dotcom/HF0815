@@ -87,7 +87,7 @@
     async function connectSensor(id) {
         try {
             const device = await navigator.bluetooth.requestDevice({
-                filters: [{ namePrefix: 'HeadTracker_' }],
+                filters: [{ namePrefix: 'HeadTracker-' }],
                 optionalServices: [SERVICE_UUID]
             });
 
